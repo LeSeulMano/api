@@ -18,7 +18,7 @@ function generateVerificationCode() {
     return code;
 }
 
-router.post('/sign-up', validateRegister, (req, res, next) => {
+router.post('/api/sign-up', validateRegister, (req, res, next) => {
     db.query(`SELECT id FROM users WHERE email = '${req.body.email}'`, (err, result) => {
         if (result && result.length) {
             return res.status(409).send({
@@ -98,7 +98,7 @@ const storage = multer.diskStorage({
 
 const uplaod = multer({ storage: storage });
 
-router.post('/upload', uplaod.single('file'), (req, res) => {
+router.post('/api/upload', uplaod.single('file'), (req, res) => {
     let newname = req.body.newName;
     let extension = req.body.extension;
     if (!newname) {
@@ -122,7 +122,7 @@ router.post('/upload', uplaod.single('file'), (req, res) => {
 })
 
 
-router.post('/cours', uplaod.single('file'), (req, res) => {
+router.post('/api/cours', uplaod.single('file'), (req, res) => {
     try {
         db.query(`INSERT INTO cours (name, year, shpi, type, path_folder, matiere, auteur, nbDownload) VALUES ('${req.body.name}', '${req.body.year}', '${req.body.shpi}', '${req.body.type}', '${req.body.path}', '${req.body.matiere}', '${req.body.auteur}', 0)`, (err, result) => {
             if (err) {
@@ -145,7 +145,7 @@ router.post('/cours', uplaod.single('file'), (req, res) => {
     }
 })
 
-router.get('/cours', (req, res) => {
+router.get('/api/cours', (req, res) => {
     try {
         db.query("SELECT * FROM cours ORDER BY id DESC", (err, results) => {
             if (err) {
@@ -163,7 +163,7 @@ router.get('/cours', (req, res) => {
 
 })
 
-router.get('/config', (req, res) => {
+router.get('/api/config', (req, res) => {
     res.send('This is the secret content. Only logged in users can see that!');
 })
 
@@ -190,13 +190,13 @@ router.get('/verify', (req, res) => {
     });
 })
 
-router.post('/logout', (req, res, next) => {
+router.post('/api/logout', (req, res, next) => {
 
     res.cookie('session', '', { maxAge: 0 });
     res.send({ message: 'Logged out successfully' });
 })
 
-router.post('/login', (req, res, next) => {
+router.post('/api/login', (req, res, next) => {
     db.query(`SELECT * FROM users WHERE email = ${db.escape(req.body.email)};`, (err, result) => {
         if (err) {
             throw err;
@@ -305,21 +305,21 @@ router.post('/login', (req, res, next) => {
 
 })
 
-router.get('/secret-route', isLoggedIn, (req, res, next) => {
+router.get('/api/secret-route', isLoggedIn, (req, res, next) => {
     res.send('This is the secret content. Only logged in users can see that!');
 })
 
-router.get('/admin', isAdmin, (req, res, next) => {
+router.get('/api/admin', isAdmin, (req, res, next) => {
     res.send('This is the admin content. Only logged in users can see that!');
 })
 
-router.get('/mod-cours', isModCours, (req, res, next) => {
+router.get('/api/mod-cours', isModCours, (req, res, next) => {
     res.send('This is the modcours content. Only logged in users can see that!');
 })
 
 
 
-router.post('/test', emailSend);
+router.post('/api/test', emailSend);
 
 
 export default router;
