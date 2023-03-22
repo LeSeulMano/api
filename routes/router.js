@@ -4,19 +4,100 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 } from 'uuid';
 import db from '../lib/db.js'
-import { validateRegister, isLoggedIn, isAdmin, emailSend, isModCours } from '../middleware/user.js'
+import { validateRegister, emailSend } from '../middleware/user.js'
 import nodemailer from 'nodemailer';
 import multer from 'multer';
 import fs from 'fs'
+import bodyParser from 'body-parser';
 
-function generateVerificationCode() {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-        code += characters.charAt(Math.floor(Math.random() * characters.length));
+
+router.use(bodyParser.json({ limit: '50mb' }));
+router.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+
+
+import cookieParser from 'cookie-parser';
+
+
+router.use(cookieParser());
+
+const SECRET_KEY = 'mysecretkey';
+const SECRET_KEY_MOD = 'secretmod';
+
+router.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  db.query(`SELECT * FROM users WHERE email = ${db.escape(email)};`, (err, result) => {
+    if (err) {
+      throw err;
     }
-    return code;
-}
+    if (!result.length) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+    bcrypt.compare(password, result[0]['password'], (bErr, bResult) => {
+      if (bErr) {
+        throw bErr;
+      }
+      if (!bResult) {
+        return res.status(401).json({ success: false, message: 'Invalid email or password' });
+      }
+      if (result[0].mod_cours == 0) {
+        const token = jwt.sign({ user: { id: result[0].id, email: result[0].email } }, SECRET_KEY, { expiresIn: '1h' });
+        res.cookie('token', token, { httpOnly: true, sameSite: 'none' });
+        res.json({ success: true, message: 'Logged in successfully' });
+      } else if (result[0].mod_cours == 1) {
+        const token = jwt.sign({ user: { id: result[0].id, email: result[0].email } }, SECRET_KEY_MOD, { expiresIn: '1h' });
+        console.log(token);
+        res.cookie('token', token, { httpOnly: true });
+        res.json({ success: true, message: 'Logged in successfully' });
+      }
+    });
+  });
+});
+
+router.get('/api/logout', (req, res) => {
+    res.clearCookie('token');
+    res.send({ message: 'Logged out successfully' });
+});
+router.get('/api/secret-route', (req, res) => {
+    const token = req.cookies.token || req.body.token || req.query.token;
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+    jwt.verify(token, SECRET_KEY , (err, decoded) => {
+      if (err) {
+
+        return res.status(401).json({ success: false, message: 'Invalid token' });
+      }
+      res.json({ success: true, message: 'You have access to the secret route' });
+
+    });
+  });
+  
+  // Route to access the mod route
+  router.get('/api/mod-cours', (req, res) => {
+    const token = req.cookies.token || req.body.token || req.query.token;
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+    jwt.verify(token, SECRET_KEY_MOD , (err, decoded) => {
+      if (err) {
+        return res.status(401).json({ success: false, message: 'Invalid token' });
+      }
+      res.json({ success: true, message: 'You have access to the secret route' });
+    })
+  });
+
+
+
+
+// function generateVerificationCode() {
+//     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+//     let code = '';
+//     for (let i = 0; i < 6; i++) {
+//         code += characters.charAt(Math.floor(Math.random() * characters.length));
+//     }
+//     return code;
+// }
 
 router.post('/api/sign-up', validateRegister, (req, res, next) => {
     db.query(`SELECT id FROM users WHERE email = '${req.body.email}'`, (err, result) => {
@@ -87,50 +168,53 @@ router.post('/api/sign-up', validateRegister, (req, res, next) => {
 
 })
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads/')
-    },
-    filename: function(req, file, cb) {
-        cb(null, file.originalname)
+const upload = multer({
+  storage: multer.memoryStorage(),
+});
+
+router.post('/api/upload', upload.single('file'), (req, res) => {
+  console.log('uploading file...');
+
+  const newname = req.body.newName;
+  const extension = req.body.extension;
+
+  if (!newname) {
+    return res.status(400).json({
+      error: 'New name for the file is required.'
+    });
+  }
+
+  const fileName = `${newname}.${extension}`;
+  const filePath = `/var/www/uploads/${fileName}`;
+  fs.writeFile(filePath, req.file.buffer, (err) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({
+        error: 'Failed to write file to disk.'
+      });
     }
-})
 
-const uplaod = multer({ storage: storage });
+    console.log('file saved:', filePath);
 
-router.post('/api/upload', uplaod.single('file'), (req, res) => {
-    let newname = req.body.newName;
-    let extension = req.body.extension;
-    if (!newname) {
-        newname = req.file.originalname;
-    }
-    newname += '.' + extension
-
-    let i = 1
-    while (fs.existsSync(`uploads/${newname}`)) {
-        console.log(newname);
-        newname = `${req.body.newName}(${i}).${extension}`
-        i++
-    }
-
-    fs.renameSync(`uploads/${req.file.filename}`, `uploads/${newname}`);
-
-    res.send({
-        status: 'success',
-        file: req.file
-    })
-})
+    return res.json({
+      status: 'success',
+      fileName
+    });
+  });
+});
 
 
-router.post('/api/cours', uplaod.single('file'), (req, res) => {
+
+router.post('/api/cours', (req, res) => {
     try {
-        db.query(`INSERT INTO cours (name, year, shpi, type, path_folder, matiere, auteur, nbDownload) VALUES ('${req.body.name}', '${req.body.year}', '${req.body.shpi}', '${req.body.type}', '${req.body.path}', '${req.body.matiere}', '${req.body.auteur}', 0)`, (err, result) => {
+        db.query(`INSERT INTO cours (name, year, shpi, type, path_folder, matiere, auteur, nbDownload) VALUES ('${req.body.name}', '${req.body.year}', '${req.body.shpi}', '${req.body.type}', ''${req.body.path}', '${req.body.matiere}', '${req.body.auteur}', 0)`, (err, result) => {
+
             if (err) {
-                console.log(err);
                 throw err;
                 return res.status(500).send({
                     message: err
-                })
+
+             })
             } else {
                 res.send({
                     status: 'success'
@@ -144,6 +228,7 @@ router.post('/api/cours', uplaod.single('file'), (req, res) => {
         })
     }
 })
+
 
 router.get('/api/cours', (req, res) => {
     try {
@@ -163,163 +248,35 @@ router.get('/api/cours', (req, res) => {
 
 })
 
-router.get('/api/config', (req, res) => {
-    res.send('This is the secret content. Only logged in users can see that!');
-})
+// router.get('/api/config', (req, res) => {
+//     res.send('This is the secret content. Only logged in users can see that!');
+// })
 
-router.get('/verify', (req, res) => {
-    const email = req.query.email;
-    const verificationCode = req.query.code;
+// router.get('/verify', (req, res) => {
+//     const email = req.query.email;
+//     const verificationCode = req.query.code;
 
-    db.query('SELECT * FROM users WHERE email = ? AND verification_code = ?', [email, verificationCode], (err, result) => {
-        if (err) {
-            res.status(500).send('Error verifying email');
-        } else if (result.length === 0) {
-            res.status(400).send('Invalid verification code');
-        } else {
-            const userId = result[0].id;
+//     db.query('SELECT * FROM users WHERE email = ? AND verification_code = ?', [email, verificationCode], (err, result) => {
+//         if (err) {
+//             res.status(500).send('Error verifying email');
+//         } else if (result.length === 0) {
+//             res.status(400).send('Invalid verification code');
+//         } else {
+//             const userId = result[0].id;
 
-            db.query('UPDATE users SET email_verified = 1 WHERE id = ?', [userId], (err, result) => {
-                if (err) {
-                    res.status(500).send('Error verifying email');
-                } else {
-                    res.send('Email verified');
-                }
-            });
-        }
-    });
-})
-
-router.post('/api/logout', (req, res, next) => {
-
-    res.cookie('session', '', { maxAge: 0 });
-    res.send({ message: 'Logged out successfully' });
-})
-
-router.post('/api/login', (req, res, next) => {
-    db.query(`SELECT * FROM users WHERE email = ${db.escape(req.body.email)};`, (err, result) => {
-        if (err) {
-            throw err;
-            return res.status(400).send({
-                message: err
-            })
-        }
-        if (!result.length) {
-            return res.status(400).send({
-                message: 'Email or password incorrect ! '
-            })
-        }
-
-        bcrypt.compare(req.body.password, result[0]['password'], (bErr, bResult) => {
-            if (bErr) {
-                throw bErr;
-                res.status(400).send({
-                    message: 'Email or password incorrect ! '
-                })
-            }
-            if (bResult) {
-                if (result[0].admin == 1) {
-                    const token = jwt.sign({
-                        email: result[0].email,
-                        userId: result[0].id,
-                    }, 'SECRETKEYADMIN', {
-                        expiresIn: '1d'
-                    });
-                    
-                    try {
-                        res.cookie('session', token, {
-                            expires: new Date(Date.now() + 25892000000),
-                            httpOnly: false,
-                            sameSite: 'none'
-                        })
-                    }
-                    catch (err) {
-                        console.log(err);
-                    }
-
-                    db.query(`UPDATE users SET last_login = now() WHERE id = ${result[0].id}`);
-                    return res.status(200).send({
-                        message: 'Logged !',
-                        token,
-                        user: result[0]
-                    })
-                }
-                else if (result[0].mod_cours == 1) {
-                    const token = jwt.sign({
-                        email: result[0].email,
-                        userId: result[0].id,
-                    }, 'SECRETKEYMODCOURS', {
-                        expiresIn: '1d'
-                    });
-                    
-                    try {
-                        res.cookie('session', token, {
-                            expires: new Date(Date.now() + 25892000000),
-                            httpOnly: false,
-                            sameSite: 'none'
-                        })
-                    }
-                    catch (err) {
-                        console.log(err);
-                    }
-
-                    db.query(`UPDATE users SET last_login = now() WHERE id = ${result[0].id}`);
-                    return res.status(200).send({
-                        message: 'Logged !',
-                        token,
-                        user: result[0]
-                    })
-                }
-                else {
-                    const token = jwt.sign({
-                        email: result[0].email,
-                        userId: result[0].id,
-                    }, 'SECRETKEY', {
-                        expiresIn: '1d'
-                    });
-
-                    try {
-                        res.cookie('session', token, {
-                            expires: new Date(Date.now() + 25892000000),
-                            httpOnly: false,
-                            sameSite: 'none'
-                        })
-                    }
-                    catch (err) {
-                        console.log(err);
-                    }
-
-                    db.query(`UPDATE users SET last_login = now() WHERE id = ${result[0].id}`);
-                    return res.status(200).send({
-                        message: 'Logged !',
-                        token,
-                        user: result[0]
-                    })
-                }
-            }
-            return res.status(400).send({
-                message: 'Email or password incorrect ! '
-            })
-        })
-    })
-
-})
-
-router.get('/api/secret-route', isLoggedIn, (req, res, next) => {
-    res.send('This is the secret content. Only logged in users can see that!');
-})
-
-router.get('/api/admin', isAdmin, (req, res, next) => {
-    res.send('This is the admin content. Only logged in users can see that!');
-})
-
-router.get('/api/mod-cours', isModCours, (req, res, next) => {
-    res.send('This is the modcours content. Only logged in users can see that!');
-})
+//             db.query('UPDATE users SET email_verified = 1 WHERE id = ?', [userId], (err, result) => {
+//                 if (err) {
+//                     res.status(500).send('Error verifying email');
+//                 } else {
+//                     res.send('Email verified');
+//                 }
+//             });
+//         }
+//     });
+// })
 
 
-
-router.post('/api/test', emailSend);
+// router.post('/api/test', emailSend);
 
 
 export default router;
